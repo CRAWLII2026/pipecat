@@ -21,6 +21,9 @@ run_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("run_id"
 # Context variable for tracking the current organization ID across the pipeline
 org_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("org_id", default=None)
 
+# Context variable for tracking the current Langfuse session ID
+session_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("session_id", default=None)
+
 # Context variable for tracking the current turn number in a conversation
 turn_var: contextvars.ContextVar[int] = contextvars.ContextVar("turn", default=0)
 
@@ -65,6 +68,24 @@ def set_current_org_id(org_id: str | int | None) -> None:
     if org_id is not None:
         org_id = str(org_id)
     org_id_var.set(org_id)
+
+
+def get_current_session_id() -> str | None:
+    """Get the current Langfuse session ID from the context.
+
+    Returns:
+        The current session ID or None if not set.
+    """
+    return session_id_var.get()
+
+
+def set_current_session_id(session_id: str | None) -> None:
+    """Set the current Langfuse session ID in the context.
+
+    Args:
+        session_id: The session ID to set, or None to clear it.
+    """
+    session_id_var.set(session_id)
 
 
 def get_current_turn() -> int:
