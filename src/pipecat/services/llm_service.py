@@ -658,6 +658,7 @@ class LLMService(UserTurnCompletionLLMServiceMixin, AIService, Generic[TAdapter]
         Args:
             text: The text content from the LLM to push.
         """
+        print(f"[LLM-TRACE] _push_llm_text: '{text[:80]}' filter={self._filter_incomplete_user_turns}", flush=True)
         if self._filter_incomplete_user_turns:
             await self._push_turn_text(text)
         else:

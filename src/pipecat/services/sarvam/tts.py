@@ -584,6 +584,7 @@ class SarvamHttpTTSService(TTSService):
         Yields:
             Frame: Audio frames containing the synthesized speech.
         """
+        print(f"[SARVAM-TTS-TRACE] run_tts (HTTP) called: text='{text[:80]}'", flush=True)
         logger.debug(f"{self}: Generating TTS [{text}]")
 
         try:
@@ -1233,6 +1234,7 @@ class SarvamTTSService(InterruptibleTTSService):
             Frame objects including TTSStartedFrame, TTSAudioRawFrame(s, context_id=context_id), or TTSStoppedFrame.
         """
         logger.debug(f"Generating TTS: [{text}]")
+        print(f"[SARVAM-TTS-TRACE] run_tts (WS) called: text='{text[:80]}'", flush=True)
 
         try:
             if not self._websocket or self._websocket.state is State.CLOSED:

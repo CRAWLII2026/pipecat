@@ -415,164 +415,176 @@ class BaseOpenAILLMService(LLMService[OpenAILLMAdapter]):
 
     @traced_llm
     async def _process_context(self, context: LLMContext):
-        functions_list = []
-        arguments_list = []
-        tool_id_list = []
-        func_idx = 0
-        function_name = ""
-        arguments = ""
-        tool_call_id = ""
+        import time as _time
+        try:
+            functions_list = []
+            arguments_list = []
+            tool_id_list = []
+            func_idx = 0
+            function_name = ""
+            arguments = ""
+            tool_call_id = ""
 
-        # Reset pending function calls when processing a new context
-        self._pending_function_calls = []
+            # Reset pending function calls when processing a new context
+            self._pending_function_calls = []
 
-        # Flag to store whether some text was generated in the current generation
-        text_generated_signal = False
+            # Flag to store whether some text was generated in the current generation
+            text_generated_signal = False
 
-        await self.start_ttfb_metrics()
+            await self.start_ttfb_metrics()
 
-        # Generate chat completions from LLMContext
-        chunk_stream = await self.get_chat_completions(context)
+            # Generate chat completions from LLMContext
+            print(f"[LLM-TRACE] calling get_chat_completions at {_time.time():.3f}", flush=True)
+            chunk_stream = await self.get_chat_completions(context)
+            print(f"[LLM-TRACE] get_chat_completions returned stream at {_time.time():.3f}", flush=True)
 
-        # Ensure stream and its async iterator are closed on cancellation/exception
-        # to prevent socket leaks and uvloop crashes. Closing the iterator first
-        # cascades cleanup through nested async generators (httpx/httpcore internals),
-        # preventing uvloop's broken asyncgen finalizer from firing on Python 3.12+
-        # (MagicStack/uvloop#699).
-        @asynccontextmanager
-        async def _closing(stream):
-            chunk_iter = stream.__aiter__()
-            try:
-                yield chunk_iter
-            finally:
-                # Close the iterator first to cascade cleanup through
-                # nested async generators (httpx/httpcore internals).
-                if hasattr(chunk_iter, "aclose"):
-                    await chunk_iter.aclose()
-                # Then close the stream to release HTTP resources.
-                if hasattr(stream, "close"):
-                    await stream.close()
-                elif hasattr(stream, "aclose"):
-                    await stream.aclose()
-
-        async with _closing(chunk_stream) as chunk_iter:
-            async for chunk in chunk_iter:
-                if chunk.usage:
-                    cached_tokens = (
-                        chunk.usage.prompt_tokens_details.cached_tokens
-                        if chunk.usage.prompt_tokens_details
-                        else None
-                    )
-                    reasoning_tokens = (
-                        chunk.usage.completion_tokens_details.reasoning_tokens
-                        if chunk.usage.completion_tokens_details
-                        else None
-                    )
-                    tokens = LLMTokenUsage(
-                        prompt_tokens=chunk.usage.prompt_tokens,
-                        completion_tokens=chunk.usage.completion_tokens,
-                        total_tokens=chunk.usage.total_tokens,
-                        cache_read_input_tokens=cached_tokens,
-                        reasoning_tokens=reasoning_tokens,
-                    )
-                    await self.start_llm_usage_metrics(tokens)
-
-                if chunk.model and self.get_full_model_name() != chunk.model:
-                    self.set_full_model_name(chunk.model)
-
-                if chunk.choices is None or len(chunk.choices) == 0:
-                    continue
-
-                await self.stop_ttfb_metrics()
-
-                if not chunk.choices[0].delta:
-                    continue
-
-                if chunk.choices[0].delta.tool_calls:
-                    # We're streaming the LLM response to enable the fastest response times.
-                    # For text, we just yield each chunk as we receive it and count on consumers
-                    # to do whatever coalescing they need (eg. to pass full sentences to TTS)
-                    #
-                    # If the LLM is a function call, we'll do some coalescing here.
-                    # If the response contains a function name, we'll yield a frame to tell consumers
-                    # that they can start preparing to call the function with that name.
-                    # We accumulate all the arguments for the rest of the streamed response, then when
-                    # the response is done, we package up all the arguments and the function name and
-                    # yield a frame containing the function name and the arguments.
-
-                    tool_call = chunk.choices[0].delta.tool_calls[0]
-                    if tool_call.index != func_idx:
-                        functions_list.append(function_name)
-                        arguments_list.append(arguments or "{}")
-                        tool_id_list.append(tool_call_id)
-                        function_name = ""
-                        arguments = ""
-                        tool_call_id = ""
-                        func_idx += 1
-                    if tool_call.function and tool_call.function.name:
-                        function_name += tool_call.function.name
-                        tool_call_id = tool_call.id
-                    if tool_call.function and tool_call.function.arguments:
-                        # Keep iterating through the response to collect all the argument fragments
-                        arguments += tool_call.function.arguments
-                elif chunk.choices[0].delta.content:
-                    text_generated_signal = True
-                    await self._push_llm_text(chunk.choices[0].delta.content)
-
-                # When gpt-4o-audio / gpt-4o-mini-audio is used for llm or stt+llm
-                # we need to get LLMTextFrame for the transcript
-                elif (
-                    hasattr(chunk.choices[0].delta, "audio")
-                    and chunk.choices[0].delta.audio
-                    and chunk.choices[0].delta.audio.get("transcript")
-                ):
-                    await self.push_frame(LLMTextFrame(chunk.choices[0].delta.audio["transcript"]))
-
-        # if we got a function name and arguments, check to see if it's a function with
-        # a registered handler. If so, run the registered callback, save the result to
-        # the context, and re-prompt to get a chat answer. If we don't have a registered
-        # handler, raise an exception.
-        if function_name:
-            # added to the list as last function name and arguments not added to the list
-            functions_list.append(function_name)
-            arguments_list.append(arguments or "{}")
-            tool_id_list.append(tool_call_id)
-
-            function_calls = []
-
-            for function_name, arguments, tool_id in zip(
-                functions_list, arguments_list, tool_id_list
-            ):
+            # Ensure stream and its async iterator are closed on cancellation/exception
+            # to prevent socket leaks and uvloop crashes. Closing the iterator first
+            # cascades cleanup through nested async generators (httpx/httpcore internals),
+            # preventing uvloop's broken asyncgen finalizer from firing on Python 3.12+
+            # (MagicStack/uvloop#699).
+            @asynccontextmanager
+            async def _closing(stream):
+                chunk_iter = stream.__aiter__()
                 try:
-                    arguments = json.loads(arguments)
-                except json.JSONDecodeError:
-                    logger.warning(f"{self}: Failed to parse function call arguments: {arguments}")
-                    continue
-                function_calls.append(
-                    FunctionCallFromLLM(
-                        context=context,
-                        tool_call_id=tool_id,
-                        function_name=function_name,
-                        arguments=arguments,
+                    yield chunk_iter
+                finally:
+                    # Close the iterator first to cascade cleanup through
+                    # nested async generators (httpx/httpcore internals).
+                    if hasattr(chunk_iter, "aclose"):
+                        await chunk_iter.aclose()
+                    # Then close the stream to release HTTP resources.
+                    if hasattr(stream, "close"):
+                        await stream.close()
+                    elif hasattr(stream, "aclose"):
+                        await stream.aclose()
+
+            async with _closing(chunk_stream) as chunk_iter:
+                print(f"[LLM-TRACE] starting to iterate stream at {_time.time():.3f}", flush=True)
+                async for chunk in chunk_iter:
+                    if chunk.usage:
+                        cached_tokens = (
+                            chunk.usage.prompt_tokens_details.cached_tokens
+                            if chunk.usage.prompt_tokens_details
+                            else None
+                        )
+                        reasoning_tokens = (
+                            chunk.usage.completion_tokens_details.reasoning_tokens
+                            if chunk.usage.completion_tokens_details
+                            else None
+                        )
+                        tokens = LLMTokenUsage(
+                            prompt_tokens=chunk.usage.prompt_tokens,
+                            completion_tokens=chunk.usage.completion_tokens,
+                            total_tokens=chunk.usage.total_tokens,
+                            cache_read_input_tokens=cached_tokens,
+                            reasoning_tokens=reasoning_tokens,
+                        )
+                        await self.start_llm_usage_metrics(tokens)
+
+                    if chunk.model and self.get_full_model_name() != chunk.model:
+                        self.set_full_model_name(chunk.model)
+
+                    if chunk.choices is None or len(chunk.choices) == 0:
+                        continue
+
+                    await self.stop_ttfb_metrics()
+
+                    if not chunk.choices[0].delta:
+                        continue
+
+                    if chunk.choices[0].delta.tool_calls:
+                        # We're streaming the LLM response to enable the fastest response times.
+                        # For text, we just yield each chunk as we receive it and count on consumers
+                        # to do whatever coalescing they need (eg. to pass full sentences to TTS)
+                        #
+                        # If the LLM is a function call, we'll do some coalescing here.
+                        # If the response contains a function name, we'll yield a frame to tell consumers
+                        # that they can start preparing to call the function with that name.
+                        # We accumulate all the arguments for the rest of the streamed response, then when
+                        # the response is done, we package up all the arguments and the function name and
+                        # yield a frame containing the function name and the arguments.
+
+                        tool_call = chunk.choices[0].delta.tool_calls[0]
+                        if tool_call.index != func_idx:
+                            functions_list.append(function_name)
+                            arguments_list.append(arguments or "{}")
+                            tool_id_list.append(tool_call_id)
+                            function_name = ""
+                            arguments = ""
+                            tool_call_id = ""
+                            func_idx += 1
+                        if tool_call.function and tool_call.function.name:
+                            function_name += tool_call.function.name
+                            tool_call_id = tool_call.id
+                        if tool_call.function and tool_call.function.arguments:
+                            # Keep iterating through the response to collect all the argument fragments
+                            arguments += tool_call.function.arguments
+                    elif chunk.choices[0].delta.content:
+                        if not text_generated_signal:
+                            print(f"[LLM-TRACE] first text chunk received at {_time.time():.3f}", flush=True)
+                        text_generated_signal = True
+                        await self._push_llm_text(chunk.choices[0].delta.content)
+
+                    # When gpt-4o-audio / gpt-4o-mini-audio is used for llm or stt+llm
+                    # we need to get LLMTextFrame for the transcript
+                    elif (
+                        hasattr(chunk.choices[0].delta, "audio")
+                        and chunk.choices[0].delta.audio
+                        and chunk.choices[0].delta.audio.get("transcript")
+                    ):
+                        await self.push_frame(LLMTextFrame(chunk.choices[0].delta.audio["transcript"]))
+
+            # if we got a function name and arguments, check to see if it's a function with
+            # a registered handler. If so, run the registered callback, save the result to
+            # the context, and re-prompt to get a chat answer. If we don't have a registered
+            # handler, raise an exception.
+            if function_name:
+                # added to the list as last function name and arguments not added to the list
+                functions_list.append(function_name)
+                arguments_list.append(arguments or "{}")
+                tool_id_list.append(tool_call_id)
+
+                function_calls = []
+
+                for function_name, arguments, tool_id in zip(
+                    functions_list, arguments_list, tool_id_list
+                ):
+                    try:
+                        arguments = json.loads(arguments)
+                    except json.JSONDecodeError:
+                        logger.warning(f"{self}: Failed to parse function call arguments: {arguments}")
+                        continue
+                    function_calls.append(
+                        FunctionCallFromLLM(
+                            context=context,
+                            tool_call_id=tool_id,
+                            function_name=function_name,
+                            arguments=arguments,
+                        )
                     )
+
+                # Send the info frame with function calls so that it can be traced by service_decorators
+                await self.push_frame(
+                    FunctionCallsFromLLMInfoFrame(function_calls=function_calls),
+                    direction=FrameDirection.DOWNSTREAM,
                 )
 
-            # Send the info frame with function calls so that it can be traced by service_decorators
-            await self.push_frame(
-                FunctionCallsFromLLMInfoFrame(function_calls=function_calls),
-                direction=FrameDirection.DOWNSTREAM,
-            )
+                # If text was generated, defer function calls until after TTS plays
+                # Otherwise, execute them immediately
+                if text_generated_signal:
+                    self._pending_function_calls = function_calls
+                    logger.debug(
+                        f"{self}: Deferring {len(function_calls)} function calls until after TTS"
+                    )
+                else:
+                    logger.debug(f"{self}: Executing {len(function_calls)} function calls")
+                    await self.run_function_calls(function_calls)
 
-            # If text was generated, defer function calls until after TTS plays
-            # Otherwise, execute them immediately
-            if text_generated_signal:
-                self._pending_function_calls = function_calls
-                logger.debug(
-                    f"{self}: Deferring {len(function_calls)} function calls until after TTS"
-                )
-            else:
-                logger.debug(f"{self}: Executing {len(function_calls)} function calls")
-                await self.run_function_calls(function_calls)
+            print(f"[LLM-TRACE] _process_context completed at {_time.time():.3f}", flush=True)
+        except Exception as e:
+            print(f"[LLM-TRACE] _process_context EXCEPTION: {type(e).__name__}: {e}", flush=True)
+            raise
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         """Process frames for LLM completion requests.
@@ -596,6 +608,8 @@ class BaseOpenAILLMService(LLMService[OpenAILLMAdapter]):
             await self.push_frame(frame, direction)
         elif isinstance(frame, LLMContextFrame):
             try:
+                import time as _time
+                print(f"[LLM-TRACE] LLMContextFrame received at {_time.time():.3f}", flush=True)
                 await self.push_frame(LLMFullResponseStartFrame())
                 await self.start_processing_metrics()
                 await self._process_context(frame.context)

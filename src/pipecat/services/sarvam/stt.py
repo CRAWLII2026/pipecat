@@ -449,10 +449,13 @@ class SarvamSTTService(STTService):
         # Only handle VAD frames when not using Sarvam's VAD signals
         if not self._settings.vad_signals:
             if isinstance(frame, VADUserStartedSpeakingFrame):
+                print(f"[SARVAM-TRACE] VAD: user started speaking", flush=True)
                 await self._start_metrics()
             elif isinstance(frame, VADUserStoppedSpeakingFrame):
+                print(f"[SARVAM-TRACE] VAD: user stopped speaking — calling flush()", flush=True)
                 if self._socket_client:
                     await self._socket_client.flush()
+                    print(f"[SARVAM-TRACE] VAD: flush() completed", flush=True)
 
     async def _update_settings(self, delta: STTSettings) -> dict[str, Any]:
         """Apply a settings delta, validate, sync state, and reconnect.
@@ -620,7 +623,10 @@ class SarvamSTTService(STTService):
             else:
                 await self._socket_client.transcribe(**method_kwargs)
 
+            print(f"[SARVAM-TRACE] run_stt: sent {len(audio)} bytes audio to Sarvam", flush=True)
+
         except Exception as e:
+            print(f"[SARVAM-TRACE] run_stt: error sending audio: {e}", flush=True)
             yield ErrorFrame(error=f"Error sending audio to Sarvam: {e}", exception=e)
 
         yield None
@@ -787,13 +793,17 @@ class SarvamSTTService(STTService):
         messages via the registered event handler callback.
         """
         if not self._socket_client:
+            print(f"[SARVAM-TRACE] _receive_task_handler: no socket_client", flush=True)
             return
 
         try:
+            print(f"[SARVAM-TRACE] _receive_task_handler: starting to listen", flush=True)
             # Start listening for messages from the Sarvam SDK
             # Messages will be handled via the _message_handler callback
             await self._socket_client.start_listening()
+            print(f"[SARVAM-TRACE] _receive_task_handler: start_listening returned", flush=True)
         except Exception as e:
+            print(f"[SARVAM-TRACE] _receive_task_handler: error: {e}", flush=True)
             await self.push_error(error_msg=f"Sarvam receive task error: {e}", exception=e)
 
     async def _handle_message(self, message):
@@ -804,6 +814,7 @@ class SarvamSTTService(STTService):
         Args:
             message: The parsed response object from Sarvam WebSocket.
         """
+        print(f"[SARVAM-TRACE] _handle_message: type={message.type}, data={message.data}", flush=True)
         logger.debug(f"Received response: {message}")
 
         try:
@@ -814,15 +825,18 @@ class SarvamSTTService(STTService):
                 logger.debug(f"VAD Signal: {signal}, Occurred at: {timestamp}")
 
                 if signal == "START_SPEECH":
-                    await self._start_metrics()
+                    print(f"[SARVAM-TRACE] START_SPEECH signal received", flush=True)
                     logger.debug("User started speaking")
                     await self._call_event_handler("on_speech_started")
+                    await self.broadcast_frame(VADUserStartedSpeakingFrame)
                     await self.broadcast_frame(UserStartedSpeakingFrame)
                     await self.broadcast_interruption()
 
                 elif signal == "END_SPEECH":
+                    print(f"[SARVAM-TRACE] END_SPEECH signal received", flush=True)
                     logger.debug("User stopped speaking")
                     await self._call_event_handler("on_speech_stopped")
+                    await self.broadcast_frame(VADUserStoppedSpeakingFrame)
                     await self.broadcast_frame(UserStoppedSpeakingFrame)
 
             elif message.type == "data":
@@ -842,6 +856,7 @@ class SarvamSTTService(STTService):
                 await self._call_event_handler("on_utterance_end")
 
                 if transcript and transcript.strip():
+                    print(f"[SARVAM-TRACE] pushing TranscriptionFrame: '{transcript}'", flush=True)
                     # Record tracing for this transcription event
                     await self._handle_transcription(transcript, True, language)
                     await self.push_frame(
@@ -851,6 +866,7 @@ class SarvamSTTService(STTService):
                             time_now_iso8601(),
                             language,
                             result=(message.dict() if hasattr(message, "dict") else str(message)),
+                            finalized=True,
                         )
                     )
 

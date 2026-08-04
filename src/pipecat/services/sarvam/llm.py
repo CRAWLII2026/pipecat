@@ -132,6 +132,8 @@ class SarvamLLMService(OpenAILLMService):
         Starts from OpenAI-compatible defaults, then removes unsupported
         request fields and applies Sarvam-specific options.
         """
+        import time as _time
+        print(f"[LLM-TRACE] build_chat_completion_params called at {_time.time():.3f}", flush=True)
         self._validate_tool_parameters(params_from_context)
 
         params = super().build_chat_completion_params(params_from_context)
@@ -147,6 +149,7 @@ class SarvamLLMService(OpenAILLMService):
         ):
             params["reasoning_effort"] = self._settings.reasoning_effort
 
+        print(f"[LLM-TRACE] build_chat_completion_params done, model={params.get('model')}", flush=True)
         return params
 
     def _validate_model(self, model: str):
