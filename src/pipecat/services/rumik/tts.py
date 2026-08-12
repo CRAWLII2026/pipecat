@@ -326,7 +326,8 @@ class RumikTTSService(InterruptibleTTSService):
                             await self.remove_audio_context(context_id)
                         self._tts_done_event.set()
                     elif msg.get("error"):
-                        print(f"[RUMIK-TRACE] received error: {msg.get('error')}", flush=True)
+                        print(f"[RUMIK-TRACE] received error: {msg}", flush=True)
+                        logger.error(f"{self}: Rumik TTS error, full message: {msg}")
                         await self.push_frame(TTSStoppedFrame())
                         await self.stop_all_metrics()
                         await self.push_error(
@@ -334,6 +335,14 @@ class RumikTTSService(InterruptibleTTSService):
                         )
                         self.reset_active_audio_context()
                         self._tts_done_event.set()
+                        # Reconnect with a fresh session for the next TTS attempt
+                        print("[RUMIK-TRACE] reconnecting after error", flush=True)
+                        try:
+                            await self._disconnect_websocket()
+                            await self._connect_websocket()
+                        except Exception as reconnect_err:
+                            print(f"[RUMIK-TRACE] reconnect failed: {reconnect_err}", flush=True)
+                            logger.error(f"{self}: Rumik reconnect after error failed: {reconnect_err}")
                     elif msg_type == "cancelled":
                         print(f"[RUMIK-TRACE] received 'cancelled' message", flush=True)
                         logger.debug(f"{self}: Rumik synthesis cancelled")
