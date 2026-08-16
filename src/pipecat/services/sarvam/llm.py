@@ -6,6 +6,7 @@
 
 """Sarvam LLM service implementation using OpenAI-compatible interface."""
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal
@@ -131,6 +132,14 @@ class SarvamLLMService(OpenAILLMService):
 
         Starts from OpenAI-compatible defaults, then removes unsupported
         request fields and applies Sarvam-specific options.
+
+        Sarvam-specific fixes:
+        - Sets ``tool_choice="auto"`` when tools are present but no explicit
+          tool_choice was set. Sarvam-105b/30b sometimes fail to invoke
+          transition functions without this hint, causing workflow nodes to
+          stall. With ``tool_choice="auto"`` the model is explicitly told it
+          MAY call tools, which significantly improves function-calling
+          reliability.
         """
         import time as _time
         print(f"[LLM-TRACE] build_chat_completion_params called at {_time.time():.3f}", flush=True)
@@ -140,6 +149,16 @@ class SarvamLLMService(OpenAILLMService):
         params.pop("stream_options", None)
         params.pop("max_completion_tokens", None)
         params.pop("service_tier", None)
+
+        # Sarvam function-calling reliability fix: if tools are present but
+        # tool_choice is NOT_GIVEN, explicitly set "auto" so the model knows
+        # it is allowed (and expected) to call functions. Without this,
+        # sarvam-105b often generates text instead of calling the transition
+        # function, causing the workflow to stall on the current node.
+        tools = params.get("tools")
+        tool_choice = params.get("tool_choice")
+        if tools and (tool_choice is None or tool_choice == NOT_GIVEN):
+            params["tool_choice"] = "auto"
 
         if is_given(self._settings.wiki_grounding) and self._settings.wiki_grounding is not None:
             params["wiki_grounding"] = self._settings.wiki_grounding
@@ -151,6 +170,44 @@ class SarvamLLMService(OpenAILLMService):
 
         print(f"[LLM-TRACE] build_chat_completion_params done, model={params.get('model')}", flush=True)
         return params
+
+    async def get_chat_completions(self, context):
+        """Override to wrap the stream and fix Sarvam's non-standard tool arguments.
+
+        Sarvam sometimes sends tool call arguments as multiple ``{}`` chunks
+        during streaming. When concatenated by the parent's _process_context,
+        these produce invalid JSON like ``{}{}`` which causes
+        ``json.loads()`` to fail and the function call to be silently
+        dropped — stalling the workflow.
+
+        This override wraps the returned async stream and normalizes each
+        chunk's ``tool_call.function.arguments`` so that:
+        - Empty ``{}`` chunks are replaced with ``""`` (no contribution)
+        - The first real argument JSON is preserved
+        - Trailing ``{}`` artifacts are stripped
+
+        This way, when the parent accumulates the arguments string, it
+        produces valid JSON instead of ``{}{}``.
+        """
+        stream = await super().get_chat_completions(context)
+
+        async def _fixed_stream():
+            async for chunk in stream:
+                try:
+                    if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.tool_calls:
+                        for tc in chunk.choices[0].delta.tool_calls:
+                            if tc.function and tc.function.arguments:
+                                args = tc.function.arguments
+                                # Sarvam sends "{}" as a no-op chunk.
+                                # Replace with empty string so it doesn't
+                                # corrupt the accumulated arguments.
+                                if args.strip() == "{}":
+                                    tc.function.arguments = ""
+                except Exception:
+                    pass  # don't let stream wrapping break the pipeline
+                yield chunk
+
+        return _fixed_stream()
 
     def _validate_model(self, model: str):
         if model not in self._SUPPORTED_MODELS:
