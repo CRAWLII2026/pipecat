@@ -11,7 +11,7 @@ from collections.abc import Callable
 from contextlib import AsyncExitStack
 from typing import Any, TypeAlias
 
-import httpx
+import httpx2
 from loguru import logger
 
 from pipecat.adapters.schemas.function_schema import FunctionSchema
@@ -114,9 +114,16 @@ class MCPClient(BaseObject):
                     sse_client(**self._server_params.model_dump())
                 )
             else:  # StreamableHttpParameters (validated in __init__)
-                timeout = httpx.Timeout(
-                    self._server_params.timeout.total_seconds(),
-                    read=self._server_params.sse_read_timeout.total_seconds(),
+                def _seconds(value) -> float:
+                    return (
+                        float(value)
+                        if isinstance(value, (int, float))
+                        else value.total_seconds()
+                    )
+
+                timeout = httpx2.Timeout(
+                    _seconds(self._server_params.timeout),
+                    read=_seconds(self._server_params.sse_read_timeout),
                 )
                 http_client = await exit_stack.enter_async_context(
                     create_mcp_http_client(
@@ -124,13 +131,16 @@ class MCPClient(BaseObject):
                         timeout=timeout,
                     )
                 )
-                read_stream, write_stream, _ = await exit_stack.enter_async_context(
+                # mcp >= 2.0 yields (read, write); older versions yielded a
+                # third session-id getter. Index so both shapes work.
+                streams = await exit_stack.enter_async_context(
                     streamable_http_client(
                         self._server_params.url,
                         http_client=http_client,
                         terminate_on_close=self._server_params.terminate_on_close,
                     )
                 )
+                read_stream, write_stream = streams[0], streams[1]
 
             session = await exit_stack.enter_async_context(ClientSession(read_stream, write_stream))
             await session.initialize()
@@ -310,9 +320,11 @@ class MCPClient(BaseObject):
 
             try:
                 # Convert the schema
+                # mcp SDK v2 renamed Tool.inputSchema to input_schema.
+                input_schema = getattr(tool, "input_schema", None) or tool.inputSchema
                 function_schema = self._convert_mcp_schema_to_pipecat(
                     tool_name,
-                    {"description": tool.description, "input_schema": tool.inputSchema},
+                    {"description": tool.description, "input_schema": input_schema},
                 )
 
                 # Add to list of schemas
