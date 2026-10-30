@@ -135,6 +135,20 @@ class SarvamTTSSpeakerV3(StrEnum):
     ADVAIT = "advait"
     AMELIA = "amelia"
     SOPHIA = "sophia"
+    ANAND = "anand"
+    TANYA = "tanya"
+    TARUN = "tarun"
+    SUNNY = "sunny"
+    MANI = "mani"
+    GOKUL = "gokul"
+    VIJAY = "vijay"
+    SHRUTI = "shruti"
+    SUHANI = "suhani"
+    MOHIT = "mohit"
+    KAVITHA = "kavitha"
+    REHAN = "rehan"
+    SOHAM = "soham"
+    RUPALI = "rupali"
 
 
 @dataclass(frozen=True)
@@ -184,6 +198,28 @@ TTS_MODEL_CONFIGS: dict[str, TTSModelConfig] = {
         speakers=tuple(s.value for s in SarvamTTSSpeakerV3),
     ),
     "bulbul:v3": TTSModelConfig(
+        supports_pitch=False,
+        supports_loudness=False,
+        supports_temperature=True,
+        default_sample_rate=24000,
+        default_speaker="shubh",
+        pace_range=(0.5, 2.0),
+        preprocessing_always_enabled=True,
+        speakers=tuple(s.value for s in SarvamTTSSpeakerV3),
+    ),
+    # bulbul:v4 and bulbul:v4-flash share the v3 parameter surface
+    # (temperature control, no pitch/loudness, forced preprocessing).
+    "bulbul:v4": TTSModelConfig(
+        supports_pitch=False,
+        supports_loudness=False,
+        supports_temperature=True,
+        default_sample_rate=24000,
+        default_speaker="shubh",
+        pace_range=(0.5, 2.0),
+        preprocessing_always_enabled=True,
+        speakers=tuple(s.value for s in SarvamTTSSpeakerV3),
+    ),
+    "bulbul:v4-flash": TTSModelConfig(
         supports_pitch=False,
         supports_loudness=False,
         supports_temperature=True,

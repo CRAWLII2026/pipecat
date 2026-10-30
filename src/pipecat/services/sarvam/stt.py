@@ -145,6 +145,18 @@ MODEL_CONFIGS: dict[str, ModelConfig] = {
         use_translate_endpoint=False,
         use_translate_method=False,
     ),
+    # saaras:v4 exposes the same streaming API surface as saaras:v3
+    # (modes, language selection, and fine-grained VAD parameters).
+    "saaras:v4": ModelConfig(
+        supports_prompt=False,
+        supports_mode=True,
+        supports_language=True,
+        supports_vad_params=True,
+        default_language="unknown",
+        default_mode="transcribe",
+        use_translate_endpoint=False,
+        use_translate_method=False,
+    ),
 }
 
 

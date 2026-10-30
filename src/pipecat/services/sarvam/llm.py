@@ -50,7 +50,14 @@ class SarvamLLMService(OpenAILLMService):
     supports_developer_role = False
 
     _SUPPORTED_MODELS = frozenset(
-        {"sarvam-30b", "sarvam-30b-16k", "sarvam-105b", "sarvam-105b-32k"}
+        {
+            "sarvam-m",
+            "sarvam-30b",
+            "sarvam-30b-16k",
+            "sarvam-105b",
+            "sarvam-105b-32k",
+            "sarvam-105b-conversations",
+        }
     )
     Settings = SarvamLLMSettings
     _settings: Settings
